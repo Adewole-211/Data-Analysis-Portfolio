@@ -3,3 +3,40 @@ FROM Person
 WHERE id NOT IN (SELECT min(id)
 FROM Person 
 GROUP BY email)
+
+
+q.id,
+q.year,
+COALESCE(npv, 0) as NPV
+FROM queries q
+LEFT JOIN NPV n
+on q.id = n.id
+AND
+q.year = n.year
+
+
+
+-- Write your PostgreSQL query statement below
+with base as (
+SELECT 
+o.customer_id,
+c.name,
+EXTRACT(MONTH FROM o.order_date) AS month,
+SUM(o.quantity * p.price) AS total_per_month
+FROM orders o
+LEFT JOIN customers c
+ON o.customer_id = c.customer_id
+LEFT JOIN product p
+ON o.product_id = p.product_id
+WHERE order_date BETWEEN '2020-06-01' AND '2020-07-31'
+GROUP BY o.customer_id, c.name, EXTRACT(MONTH FROM o.order_date)
+HAVING SUM(o.quantity * p.price) >= 100
+)
+
+SELECT 
+customer_id,
+name
+FROM base
+GROUP BY customer_id, name
+HAVING COUNT(*) = 2;
+
