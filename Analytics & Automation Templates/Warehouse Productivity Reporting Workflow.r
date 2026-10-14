@@ -1,5 +1,5 @@
-## LOAD LIBRARIES
-####################################################################################################
+## LOAD LIBRARIES ##
+############################################################################################################################################
 install.packages("tidyverse")
 install.packages("ggplot2")
 install.packages("skimr")
@@ -8,6 +8,13 @@ install.packages("lubridate")
 install.packages("openxlsx")
 install.packages("gghighlight")
 install.packages("scales")
+install.packages("httpgd")
+install.packages("languageserver")
+
+install.packages("IRkernel")
+IRkernel::installspec(user = FALSE)
+
+############################################################################################################################################
 
 library("tidyr")
 library("ggplot2")
@@ -18,340 +25,464 @@ library("openxlsx")
 library("scales")
 library("hrbrthemes")
 library("patchwork")
+library(httpgd)
 
-## DATA INGESTION
-####################################################################################################
-metric_a_data <- read.csv("path/to/metric_a.csv")
-metric_b_data <- read.csv("path/to/metric_b.csv")
-metric_c_data <- read.csv("path/to/metric_c.csv")
-metric_d_data <- read.csv("path/to/metric_d.csv")
-metric_a_root_cause <- read.csv("path/to/metric_a_root_cause.csv")
+hgd()
 
-colnames(metric_a_data)
-colnames(metric_b_data)
-colnames(metric_c_data)
-colnames(metric_d_data)
-colnames(metric_a_root_cause)
+## Formatting and Standardising ##
+############################################################################################################################################
 
-colnames(metric_a_data) <- c("site", "region", "week", "metric_a_rate")
-colnames(metric_b_data) <- c(
-  "site", "group_1", "region", "target",
-  "week_number", "week", "date",
-  "metric_b_value", "metric_b_last_year", "yoy_change"
-)
-colnames(metric_c_data) <- c(
-  "site", "group_2", "region", "target_rate",
-  "week_number", "week", "date",
-  "metric_c_count", "metric_c_rate", "vs_target", "wow", "yoy"
-)
-colnames(metric_d_data) <- c(
-  "site", "group_1", "region", "target_rate",
-  "week_number", "week", "full_date",
-  "units", "metric_d_rate", "vs_target", "yoy"
-)
-colnames(metric_a_root_cause) <- c(
-  "site", "start", "end", "process_path",
-  "category", "subcategory", "root_cause",
-  "commentary", "metric_a_bps"
-)
+site1_metric_a <- read.csv("metric_a.csv")
+site1_metric_b <- read.csv("metric_b.csv")
+site1_metric_c <- read.csv("metric_c.csv")
+site1_metric_d <- read.csv("metric_d.csv")
+site1_metric_e <- read.csv("metric_e.csv")
 
-View(metric_a_data)
-View(metric_b_data)
-View(metric_c_data)
-View(metric_d_data)
-View(metric_a_root_cause)
+############################################################################################################################################
 
-####################################################################################################
-## CREATE TABLES
-####################################################################################################
+colnames(site1_metric_a)
+colnames(site1_metric_b)
+colnames(site1_metric_c)
+colnames(site1_metric_d)
+colnames(site1_metric_e)
 
-## FOR METRIC A
-metric_a_wide <- metric_a_data %>%
+colnames(site1_metric_a) <- c("fc", "week", "variance_pct")
+colnames(site1_metric_b) <- c("warehouse_id", "period", "region", "year_number", "issue_category", "impact_level", "performance_score", "total_value")
+colnames(site1_metric_c) <- c("record_date", "fc", "missed_count", "unit_count", "deviation_score")
+colnames(site1_metric_d) <- c("warehouse_id", "ship_date", "units")
+colnames(site1_metric_e) <- c("dow", "hour", "total_score")
+
+View(site1_metric_a)
+View(site1_metric_b)
+View(site1_metric_c)
+View(site1_metric_d)
+View(site1_metric_e)
+
+################################################################################################################################################################
+## CREATE TABLES ##
+################################################################################################################################################################
+## METRIC A ##
+
+site1_metric_a$variance_pct <- as.numeric(site1_metric_a$variance_pct)
+
+site1_metric_a_wide <- site1_metric_a %>%
   pivot_wider(
-    names_from = week,
-    values_from = metric_a_rate
+    names_from  = week,
+    values_from = variance_pct,
+    values_fn   = mean
   )
 
-metric_a_wide <- metric_a_wide %>%
-  select(site, all_of(as.character(sort(as.integer(setdiff(names(.), "site"))))))
+site1_metric_a_total <- site1_metric_a %>%
+  group_by(fc) %>%
+  summarise(avg_variance = mean(variance_pct, na.rm = TRUE))
 
-metric_a_total <- metric_a_data %>%
-  group_by(site) %>%
-  summarise(avg_metric_a = mean(metric_a_rate, na.rm = TRUE))
-
-metric_a_data$metric_a_rate <- percent(metric_a_data$metric_a_rate, accuracy = 1)
-metric_a_wide[2:5] <- sapply(metric_a_wide[2:5], function(x) percent(x, accuracy = 1))
-metric_a_total$avg_metric_a <- percent(metric_a_total$avg_metric_a, accuracy = 1)
+View(site1_metric_a_wide)
+View(site1_metric_a_total)
 
 write.xlsx(
   list(
-    dashboard = metric_a_data,
-    wide = metric_a_wide,
-    total = metric_a_total
+    dashboard = site1_metric_a,
+    wide      = site1_metric_a_wide,
+    total     = site1_metric_a_total
   ),
-  file = "metric_a_summary.xlsx"
+  file = "site1_metric_a.xlsx"
 )
 
-####################################################################################################
+################################################################################################################################################################
+## METRIC B ##
 
-## FOR METRIC B
-metric_b_data <- separate(metric_b_data, date, c("date", "time"), sep = " ")
-metric_b_data$date <- ymd(metric_b_data$date)
-metric_b_data$weekday <- weekdays(metric_b_data$date)
+class(site1_metric_b$period)
+class(site1_metric_b$performance_score)
 
-colnames(metric_b_data)[is.na(colnames(metric_b_data)) | colnames(metric_b_data) == ""] <-
-  paste0("temp_col_", seq_along(which(is.na(colnames(metric_b_data)) | colnames(metric_b_data) == "")))
+site1_metric_b <- site1_metric_b[order(as.numeric(gsub("WK", "", site1_metric_b$period))), ]
 
-metric_b_wide <- metric_b_data %>%
-  mutate(metric_b_value = as.numeric(metric_b_value)) %>%
-  filter(!is.na(metric_b_value), !is.na(week_number)) %>%
-  select(site, week_number, metric_b_value) %>%
+site1_metric_b_wide <- site1_metric_b %>%
+  filter(warehouse_id %in% c(
+    "site_1",  "site_2",  "site_3",  "site_4",  "site_5",  "site_6",
+    "site_7",  "site_8",  "site_9",  "site_10", "site_11", "site_12",
+    "site_13", "site_14", "site_15", "site_16", "site_17", "site_18",
+    "site_19", "site_20", "site_21", "site_22", "site_23", "site_24",
+    "site_25", "site_26"
+  )) %>%
+  mutate(performance_score = as.numeric(performance_score)) %>%
+  filter(!is.na(performance_score), !is.na(period)) %>%
+  select(warehouse_id, period, performance_score) %>%
   pivot_wider(
-    names_from = week_number,
-    values_from = metric_b_value,
+    names_from  = period,
+    values_from = performance_score,
     values_fill = 0,
-    values_fn = sum
+    values_fn   = sum
   )
 
-metric_b_wide <- metric_b_wide %>%
-  select(site, all_of(as.character(sort(as.integer(setdiff(names(.), "site"))))))
+site1_metric_b_total <- site1_metric_b %>%
+  filter(warehouse_id %in% c(
+    "site_1",  "site_2",  "site_3",  "site_4",  "site_5",  "site_6",
+    "site_7",  "site_8",  "site_9",  "site_10", "site_11", "site_12",
+    "site_13", "site_14", "site_15", "site_16", "site_17", "site_18",
+    "site_19", "site_20", "site_21", "site_22", "site_23", "site_24",
+    "site_25", "site_26"
+  )) %>%
+  group_by(warehouse_id) %>%
+  summarise(total_score = sum(performance_score, na.rm = TRUE))
 
-metric_b_total <- metric_b_data %>%
-  group_by(site) %>%
-  summarise(total_metric_b = sum(metric_b_value, na.rm = TRUE))
+site1_metric_b_total <- site1_metric_b_total[order(as.numeric(site1_metric_b_total$total_score)), ]
+
+View(site1_metric_b_wide)
+View(site1_metric_b_total)
 
 write.xlsx(
   list(
-    dashboard = metric_b_data,
-    wide = metric_b_wide,
-    total = metric_b_total
+    dashboard = site1_metric_b,
+    wide      = site1_metric_b_wide,
+    total     = site1_metric_b_total
   ),
-  file = "metric_b_summary.xlsx"
+  file = "site1_metric_b.xlsx"
 )
 
-####################################################################################################
+################################################################################################################################################################
+## METRIC C ##
 
-## FOR METRIC C
-metric_c_data <- separate(metric_c_data, date, c("date", "time"), sep = "T")
-metric_c_data$date <- ymd(metric_c_data$date)
-metric_c_data$weekday <- weekdays(metric_c_data$date)
+site1_metric_c <- site1_metric_c %>%
+  separate(record_date, into = c("date", "time"), sep = "T")
 
-colnames(metric_c_data)[is.na(colnames(metric_c_data)) | colnames(metric_c_data) == ""] <-
-  paste0("temp_col_", seq_along(which(is.na(colnames(metric_c_data)) | colnames(metric_c_data) == "")))
+site1_metric_c$date   <- ymd(site1_metric_c$date)
+site1_metric_c$wk_num <- as.numeric(format(site1_metric_c$date, "%U")) + 1
+site1_metric_c        <- site1_metric_c %>% filter(wk_num != 35)
 
-metric_c_wide <- metric_c_data %>%
-  mutate(metric_c_count = as.numeric(metric_c_count)) %>%
-  filter(!is.na(metric_c_count), !is.na(week_number)) %>%
-  select(site, week_number, metric_c_count) %>%
+site1_metric_c_total <- site1_metric_c %>%
+  group_by(fc) %>%
+  summarise(missed_count = sum(missed_count, na.rm = TRUE))
+
+site1_metric_c_wide <- site1_metric_c %>%
+  mutate(missed = as.numeric(missed_count)) %>%
+  filter(!is.na(missed_count), !is.na(wk_num)) %>%
+  select(fc, wk_num, missed_count) %>%
   pivot_wider(
-    names_from = week_number,
-    values_from = metric_c_count,
+    names_from  = wk_num,
+    values_from = missed_count,
     values_fill = 0,
-    values_fn = sum
+    values_fn   = sum
   )
 
-metric_c_wide <- metric_c_wide %>%
-  select(site, all_of(as.character(sort(as.integer(setdiff(names(.), "site"))))))
+site1_metric_c_wide <- site1_metric_c_wide %>%
+  select(fc, all_of(as.character(sort(as.integer(setdiff(names(.), "fc"))))))
 
-metric_c_total <- metric_c_data %>%
-  group_by(site) %>%
-  summarise(total_metric_c = sum(metric_c_count, na.rm = TRUE))
+site1_metric_c_total <- site1_metric_c_total[order(as.numeric(site1_metric_c_total$missed_count)), ]
+
+View(site1_metric_c_wide)
+View(site1_metric_c_total)
 
 write.xlsx(
   list(
-    dashboard = metric_c_data,
-    wide = metric_c_wide,
-    total = metric_c_total
+    dashboard = site1_metric_c,
+    wide      = site1_metric_c_wide,
+    total     = site1_metric_c_total
   ),
-  file = "metric_c_summary.xlsx"
+  file = "site1_metric_c.xlsx"
 )
 
-####################################################################################################
+################################################################################################################################################################
+## METRIC D ##
 
-## FOR METRIC D
-metric_d_data <- separate(metric_d_data, full_date, c("date", "time"), sep = " ")
-metric_d_data$date <- ymd(metric_d_data$date)
-metric_d_data$weekday <- weekdays(metric_d_data$date)
+site1_metric_d$ship_date <- as.Date(site1_metric_d$ship_date, origin = "1899-12-30")
+site1_metric_d$wk_num    <- as.numeric(format(site1_metric_d$ship_date, "%U")) + 1
+site1_metric_d           <- site1_metric_d[-c(4)]
 
-colnames(metric_d_data)[is.na(colnames(metric_d_data)) | colnames(metric_d_data) == ""] <-
-  paste0("temp_col_", seq_along(which(is.na(colnames(metric_d_data)) | colnames(metric_d_data) == "")))
-
-metric_d_wide <- metric_d_data %>%
-  mutate(units = as.numeric(units)) %>%
-  filter(!is.na(units), !is.na(week_number)) %>%
-  select(site, week_number, units) %>%
+site1_metric_d_wide <- site1_metric_d %>%
+  mutate(missed_units = as.numeric(units)) %>%
+  filter(!is.na(units), !is.na(wk_num)) %>%
+  select(warehouse_id, wk_num, units) %>%
   pivot_wider(
-    names_from = week_number,
+    names_from  = wk_num,
     values_from = units,
     values_fill = 0,
-    values_fn = sum
+    values_fn   = sum
   )
 
-metric_d_wide <- metric_d_wide %>%
-  select(site, all_of(as.character(sort(as.integer(setdiff(names(.), "site"))))))
+site1_metric_d_wide_filtered <- site1_metric_d_wide %>%
+  filter(warehouse_id %in% c(
+    "site_1",  "site_2",  "site_3",  "site_4",  "site_5",  "site_6",
+    "site_7",  "site_8",  "site_9",  "site_10", "site_11", "site_12",
+    "site_13", "site_14", "site_15", "site_16", "site_17", "site_18",
+    "site_19", "site_20", "site_21", "site_22", "site_23", "site_24",
+    "site_25", "site_26", "site_27"
+  )) %>%
+  select(warehouse_id, all_of(as.character(sort(as.integer(setdiff(names(.), "warehouse_id"))))))
 
-metric_d_total <- metric_d_data %>%
-  group_by(site) %>%
-  summarise(total_metric_d = sum(units, na.rm = TRUE))
+site1_metric_d_total <- site1_metric_d %>%
+  filter(warehouse_id %in% c(
+    "site_1",  "site_2",  "site_3",  "site_4",  "site_5",  "site_6",
+    "site_7",  "site_8",  "site_9",  "site_10", "site_11", "site_12",
+    "site_13", "site_14", "site_15", "site_16", "site_17", "site_18",
+    "site_19", "site_20", "site_21", "site_22", "site_23", "site_24",
+    "site_25", "site_26"
+  )) %>%
+  group_by(warehouse_id) %>%
+  summarise(units = sum(units, na.rm = TRUE)) %>%
+  arrange(desc(units))
 
-write.xlsx(
-  list(
-    dashboard = metric_d_data,
-    wide = metric_d_wide,
-    total = metric_d_total
-  ),
-  file = "metric_d_summary.xlsx"
-)
-
-####################################################################################################
-## ROOT CAUSE ANALYSIS
-metric_a_root_cause <- separate(metric_a_root_cause, start, c("start_date", "start_time"), sep = " ")
-metric_a_root_cause <- separate(metric_a_root_cause, end, c("end_date", "end_time"), sep = " ")
-
-metric_a_root_cause$start_date <- ymd(metric_a_root_cause$start_date)
-metric_a_root_cause$end_date <- ymd(metric_a_root_cause$end_date)
-
-metric_a_root_cause$start_weekday <- weekdays(metric_a_root_cause$start_date)
-metric_a_root_cause$end_weekday <- weekdays(metric_a_root_cause$end_date)
-
-metric_a_rc_by_process <- metric_a_root_cause %>%
-  group_by(process_path, root_cause) %>%
-  summarise(bps = sum(metric_a_bps, na.rm = TRUE), .groups = "drop")
-
-metric_a_rc_total <- metric_a_root_cause %>%
-  group_by(root_cause) %>%
-  summarise(bps = sum(metric_a_bps, na.rm = TRUE))
+View(site1_metric_d_wide_filtered)
+View(site1_metric_d_total)
 
 write.xlsx(
   list(
-    dashboard = metric_a_root_cause,
-    by_process = metric_a_rc_by_process,
-    total_root_cause = metric_a_rc_total
+    dashboard = site1_metric_d,
+    wide      = site1_metric_d_wide,
+    total     = site1_metric_d_total
   ),
-  file = "metric_a_root_cause_summary.xlsx"
+  file = "site1_metric_d.xlsx"
 )
 
-####################################################################################################
-## VISUALISATION
+################################################################################################################################################################
+## METRIC E ##
 
-View(metric_a_rc_total)
+View(site1_metric_e)
 
-ggplot(data = metric_a_rc_total) +
-  geom_col(mapping = aes(x = root_cause, y = bps), stat = "identity")
+unique(site1_metric_e$dow)
 
-root_cause_bps_plot <- ggplot(data = metric_a_rc_total) +
+dow_levels <- c("SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT")
+site1_metric_e$dow <- factor(site1_metric_e$dow, levels = dow_levels)
+
+################################################################################################################################################################
+## VISUALISATION ##
+################################################################################################################################################################
+## Metric A Root Cause Chart ##
+
+site1_metric_a_ttl_rc <- site1_metric_a %>%
+  group_by(issue_category) %>%
+  summarise(score = sum(variance_score, na.rm = TRUE))
+
+View(site1_metric_a_ttl_rc)
+
+root_cause_chart <- ggplot(data = site1_metric_a_ttl_rc) +
   geom_col(
-    mapping = aes(x = root_cause, y = bps),
-    stat = "identity",
-    fill = "#86b7f0",
-    colour = "black",
-    width = 0.45
+    mapping = aes(x = issue_category, y = score),
+    fill    = "#86b7f0",
+    colour  = "black",
+    width   = 0.45
   ) +
-  geom_text(aes(x = root_cause, y = bps, label = bps), vjust = -0.5, size = 8) +
+  geom_text(
+    mapping = aes(x = issue_category, y = score, label = score),
+    vjust   = -0.5,
+    size    = 8
+  ) +
   theme_dark() +
   theme(
     plot.background = element_rect(fill = "grey", colour = "black"),
-    plot.title = element_text(size = 22),
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 15),
-    axis.text.y = element_text(size = 15),
-    axis.title = element_text(size = 18)
+    plot.title      = element_text(size = 22),
+    axis.text.x     = element_text(angle = 45, hjust = 1, size = 15),
+    axis.text.y     = element_text(size = 15),
+    axis.title      = element_text(size = 18)
   ) +
   labs(
-    title = "Root Cause Contribution",
-    x = "Root Cause",
-    y = "BPS"
+    title = "Issue Category by Performance Score",
+    x     = "Issue Category",
+    y     = "Performance Score"
   )
 
-root_cause_bps_plot
+root_cause_chart
+ggsave("root_cause_chart.png", root_cause_chart, width = 12, height = 8, dpi = 300)
 
-####################################################################################################
-## WEEK-OVER-WEEK VISUALS
+################################################################################################################################################################
+## Metric C WoW Graph ##
 
-metric_c_graph <- metric_c_data %>%
-  filter(site == "SITE_A") %>%
-  group_by(week) %>%
-  summarise(metric_c_count = sum(metric_c_count, na.rm = TRUE))
+site1_metric_c_graph <- site1_metric_c %>%
+  filter(fc == "site_1") %>%
+  group_by(wk_num) %>%
+  summarise(missed_count = sum(missed_count, na.rm = TRUE))
 
-ggplot(data = metric_c_graph, aes(x = week, y = metric_c_count, fill = week)) +
+metric_c_graph <- ggplot(data = site1_metric_c_graph, aes(x = wk_num, y = missed_count, fill = wk_num)) +
   geom_col(alpha = 0.7) +
   theme_dark() +
   theme(
     panel.background = element_rect(colour = "black"),
-    plot.title = element_text(size = 22, hjust = 0.5),
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 15),
-    axis.text.y = element_text(size = 15),
-    axis.title = element_text(size = 18)
+    plot.title       = element_text(size = 22, hjust = 0.5),
+    axis.text.x      = element_text(angle = 45, hjust = 1, size = 15),
+    axis.text.y      = element_text(size = 15),
+    axis.title       = element_text(size = 18)
   ) +
-  geom_text(aes(label = metric_c_count), vjust = -1.5, size = 5) +
+  geom_text(aes(label = missed_count), vjust = -0.5, size = 5) +
+  scale_x_continuous(breaks = 0:36) +
   labs(
-    x = "Week Number",
-    y = "Metric C Count",
-    title = "Site A Metric C Week-over-Week"
+    x     = "Week Number",
+    y     = "Missed Count",
+    title = "site_1 Metric C WoW"
   )
 
-metric_a_graph <- metric_a_data %>%
-  filter(site == "SITE_A") %>%
-  group_by(week) %>%
-  summarise(metric_a_rate = median(metric_a_rate, na.rm = TRUE))
+metric_c_graph
+ggsave("metric_c_graph.png", metric_c_graph, width = 12, height = 8, dpi = 300)
 
-ggplot(data = metric_a_graph, aes(x = week, y = metric_a_rate, fill = week)) +
+################################################################################################################################################################
+## Metric A WoW Graph ##
+
+site1_metric_a_graph <- site1_metric_a %>%
+  filter(fc == "site_1") %>%
+  group_by(week) %>%
+  summarise(variance_pct = round(median(variance_pct, na.rm = TRUE), 2))
+
+metric_a_graph <- ggplot(data = site1_metric_a_graph, aes(x = factor(week), y = variance_pct, fill = factor(week))) +
+  geom_col(alpha = 0.85) +
+  scale_fill_manual(values = colorRampPalette(c("#003B5C", "#0072B8", "#A8C8E8"))(length(unique(site1_metric_a_graph$week)))) +
+  theme_minimal() +
+  theme(
+    panel.background   = element_rect(fill = "#F5F7FA", colour = NA),
+    plot.background    = element_rect(fill = "#F5F7FA", colour = NA),
+    panel.grid.major.y = element_line(colour = "#D0D7DE", linetype = "dashed"),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor   = element_blank(),
+    plot.title         = element_text(size = 22, hjust = 0.5, colour = "#003B5C", face = "bold"),
+    axis.text.x        = element_text(angle = 45, hjust = 1, size = 13, colour = "#333333"),
+    axis.text.y        = element_text(size = 13, colour = "#333333"),
+    axis.title         = element_text(size = 16, colour = "#003B5C"),
+    legend.position    = "none"
+  ) +
+  geom_text(aes(label = paste0(variance_pct, "%")), vjust = -0.5, size = 5.5, colour = "#003B5C", fontface = "bold") +
+  labs(
+    x     = "Week Number",
+    y     = "Variance %",
+    title = "site_1 Average Metric A WoW"
+  )
+
+metric_a_graph
+ggsave("metric_a_graph.png", metric_a_graph, width = 12, height = 8, dpi = 300)
+
+################################################################################################################################################################
+## Metric B WoW Graph ##
+
+site1_metric_b_graph <- site1_metric_b %>%
+  filter(warehouse_id == "site_1") %>%
+  group_by(period) %>%
+  summarise(score = round(sum(performance_score, na.rm = TRUE), 3))
+
+metric_b_graph <- ggplot(data = site1_metric_b_graph, aes(x = period, y = score, fill = period)) +
   geom_col(alpha = 0.7) +
   theme_dark() +
   theme(
     panel.background = element_rect(colour = "black"),
-    plot.title = element_text(size = 22, hjust = 0.5),
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 15),
-    axis.text.y = element_text(size = 15),
-    axis.title = element_text(size = 18)
+    plot.title       = element_text(size = 22, hjust = 0.5),
+    axis.text.x      = element_text(angle = 45, hjust = 1, size = 15),
+    axis.text.y      = element_text(size = 15),
+    axis.title       = element_text(size = 18)
   ) +
-  geom_text(aes(label = metric_a_rate), vjust = -1.5, size = 5) +
+  geom_text(aes(label = score), vjust = -0.5, size = 6) +
   labs(
-    x = "Week Number",
-    y = "Average Metric A",
-    title = "Site A Metric A Week-over-Week"
+    x     = "Week Number",
+    y     = "Performance Score",
+    title = "site_1 Metric B Score WoW"
   )
 
-metric_b_graph <- metric_b_data %>%
-  filter(site == "SITE_A") %>%
-  group_by(week) %>%
-  summarise(metric_b_value = round(sum(metric_b_value, na.rm = TRUE), 3))
+metric_b_graph
+ggsave("metric_b_graph.png", metric_b_graph, width = 12, height = 8, dpi = 300)
 
-ggplot(data = metric_b_graph, aes(x = week, y = metric_b_value, fill = week)) +
+################################################################################################################################################################
+## Metric B Root Cause Graph ##
+
+site1_rc_metric_b_graph <- site1_metric_b %>%
+  filter(warehouse_id == "site_1") %>%
+  group_by(issue_category) %>%
+  summarise(score = round(sum(performance_score, na.rm = TRUE), 2))
+
+rc_metric_b_graph <- ggplot(data = site1_rc_metric_b_graph, aes(x = issue_category, y = score, fill = issue_category)) +
   geom_col(alpha = 0.7) +
   theme_dark() +
   theme(
     panel.background = element_rect(colour = "black"),
-    plot.title = element_text(size = 22, hjust = 0.5),
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 15),
-    axis.text.y = element_text(size = 15),
-    axis.title = element_text(size = 18)
+    plot.title       = element_text(size = 22, hjust = 0.5),
+    axis.text.x      = element_text(angle = 45, hjust = 1, size = 15),
+    axis.text.y      = element_text(size = 15),
+    axis.title       = element_text(size = 18)
   ) +
-  geom_text(aes(label = metric_b_value), vjust = -1.5, size = 5) +
+  geom_text(aes(label = score), vjust = -0.5, size = 6) +
   labs(
-    x = "Week Number",
-    y = "Metric B Value",
-    title = "Site A Metric B Week-over-Week"
+    x     = "Issue Category",
+    y     = "Performance Score",
+    title = "site_1 Metric B Issue Category Breakdown"
   )
 
-metric_d_graph <- metric_d_data %>%
-  filter(site == "SITE_A") %>%
-  group_by(week) %>%
+rc_metric_b_graph
+ggsave("rc_metric_b_graph.png", rc_metric_b_graph, width = 12, height = 8, dpi = 300)
+
+################################################################################################################################################################
+## Metric D WoW Graph ##
+
+site1_metric_d_graph <- site1_metric_d %>%
+  filter(warehouse_id == "site_1") %>%
+  group_by(wk_num) %>%
   summarise(units = sum(units, na.rm = TRUE))
 
-ggplot(data = metric_d_graph, aes(x = week, y = units, fill = week)) +
+site1_metric_d_graph <- site1_metric_d_graph[order(as.numeric(site1_metric_d_graph$wk_num)), ]
+
+metric_d_graph <- ggplot(data = site1_metric_d_graph, aes(x = wk_num, y = units, fill = wk_num)) +
   geom_col(alpha = 0.7) +
   theme_dark() +
   theme(
     panel.background = element_rect(colour = "black"),
-    plot.title = element_text(size = 22, hjust = 0.5),
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 15),
-    axis.text.y = element_text(size = 15),
-    axis.title = element_text(size = 18)
+    plot.title       = element_text(size = 22, hjust = 0.5),
+    axis.text.x      = element_text(angle = 45, hjust = 1, size = 15),
+    axis.text.y      = element_text(size = 15),
+    axis.title       = element_text(size = 18)
   ) +
-  geom_text(aes(label = units), vjust = -1.5, size = 5) +
+  geom_text(aes(label = units), vjust = -0.5, size = 5) +
+  scale_x_continuous(breaks = 0:36) +
   labs(
-    x = "Week Number",
-    y = "Units",
-    title = "Site A Metric D Week-over-Week"
+    x     = "Week Number",
+    y     = "Units",
+    title = "site_1 Metric D WoW"
   )
-####################################################################################################
+
+metric_d_graph
+ggsave("metric_d_graph.png", metric_d_graph, width = 12, height = 8, dpi = 300)
+
+################################################################################################################################################################
+## Metric D by Date Graph ##
+
+site1_metric_d_date <- site1_metric_d %>%
+  filter(warehouse_id == "site_1") %>%
+  select(ship_date, units)
+
+site1_metric_d_date$ship_date <- ymd(site1_metric_d_date$ship_date)
+
+metric_d_day_graph <- ggplot(data = site1_metric_d_date, aes(x = ship_date, y = units, fill = units)) +
+  geom_col(alpha = 0.8) +
+  scale_fill_gradient(low = "#1E90FF", high = "#FF4500") +
+  scale_x_date(date_breaks = "1 day", date_labels = "%d/%m") +
+  theme_dark() +
+  theme(
+    panel.background = element_rect(fill = "#1a1a2e", colour = "black"),
+    plot.background  = element_rect(fill = "#1a1a2e"),
+    plot.title       = element_text(size = 22, hjust = 0.5, colour = "white"),
+    axis.text.x      = element_text(angle = 45, hjust = 1, size = 10, colour = "white"),
+    axis.text.y      = element_text(size = 15, colour = "white"),
+    axis.title       = element_text(size = 18, colour = "white"),
+    legend.position  = "none"
+  ) +
+  geom_text(aes(label = units), vjust = -0.5, size = 3.5, colour = "white") +
+  labs(
+    x     = "Date",
+    y     = "Units",
+    title = "site_1 Metric D by Date"
+  )
+
+metric_d_day_graph
+ggsave("metric_d_day_graph.png", metric_d_day_graph, width = 16, height = 8, dpi = 300)
+
+################################################################################################################################################################
+## Metric E Heatmap ##
+
+metric_e_plot <- ggplot(site1_metric_e, aes(x = hour, y = dow, fill = total_score)) +
+  geom_tile(colour = "white", linewidth = 0.5) +
+  geom_text(aes(label = round(total_score, 2)), size = 3, colour = "white") +
+  scale_x_continuous(breaks = 0:31) +
+  labs(
+    title = "Performance Score by Day of Week and Hour",
+    x     = "Hour of Day",
+    y     = "Day of Week",
+    fill  = "Score"
+  ) +
+  theme_minimal() +
+  theme(panel.grid = element_blank())
+
+metric_e_plot
+ggsave("metric_e_plot.png", metric_e_plot, width = 12, height = 8, dpi = 300)
+
+################################################################################################################################################################
