@@ -1,122 +1,67 @@
-"""
-Asana Task Report Tool
-----------------------
-Pulls tasks from any Asana project via the API, applies filtering logic
-to identify incomplete and late-completed tasks, and sends a formatted
-HTML summary email via Outlook.
-
-Requirements:
-    pip install pandas requests pywin32
-
-Setup:
-    Copy .env.example to .env, fill in your values, and load them into
-    your environment before running. Never commit your .env file.
-
-Environment variables:
-    ASANA_TOKEN         : Your Asana Personal Access Token
-    ASANA_PROJECT_GID   : GID of the Asana project to query
-    REPORT_RECIPIENT    : Primary recipient email address
-    REPORT_CC           : CC recipients, comma-separated (optional)
-    SENDER_NAME         : Name shown in the email sign-off (optional)
-    LOOKBACK_DAYS       : How many days back to check (default: 7)
-    PARENT_NAME_MIN_LEN : Minimum parent task name length filter (default: 10)
-
-Attribution:
-    Data cleaning, filtering, and transformation logic — written by author.
-    API pagination, HTML email construction, Outlook dispatch — AI-assisted.
-"""
-
-import os
-import sys
-import pandas as pd
+import pandas as pd 
+import numpy as np 
+import datetime as dt
 import requests
 import win32com.client
-from datetime import datetime, timedelta
-
-
-# ──────────────────────────────────────────────
-# Configuration
-# ──────────────────────────────────────────────
-ASANA_TOKEN         = os.environ.get("ASANA_TOKEN", "")
-PROJECT_GID         = os.environ.get("ASANA_PROJECT_GID", "")
-RECIPIENT_EMAIL     = os.environ.get("REPORT_RECIPIENT", "")
-CC_EMAIL            = os.environ.get("REPORT_CC", "")
-SENDER_NAME         = os.environ.get("SENDER_NAME", "The Reporting Tool")
-LOOKBACK_DAYS       = int(os.environ.get("LOOKBACK_DAYS", "7"))
-PARENT_NAME_MIN_LEN = int(os.environ.get("PARENT_NAME_MIN_LEN", "10"))
-
-# Validate required config before doing any work
-_missing = [k for k, v in {
-    "ASANA_TOKEN":         ASANA_TOKEN,
-    "ASANA_PROJECT_GID":   PROJECT_GID,
-    "REPORT_RECIPIENT":    RECIPIENT_EMAIL,
-}.items() if not v]
-
-if _missing:
-    print(f"[ERROR] Missing required environment variables: {', '.join(_missing)}")
-    print("        Set them in your shell or .env file before running.")
-    sys.exit(1)
-
+from datetime import date, timedelta, datetime
+import json
+import requests
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 1. Fetch tasks from Asana          ◀ AI-ASSISTED
-#    Handles API pagination automatically, exits cleanly on HTTP errors.
+# 1-3. Configuration, Paginated API Fetch & DataFrame Assembly  ◀ WRITTEN BY Adewole
+#
+# Logic:
+# - Three hard-coded constants (ASANA_TOKEN, GROUP_ID, REPORT_RECIPIENT) sit
+#   at the top to centralise all credentials and targeting config in one place.
+# - A paginated GET loop hits https://app.asana.com/api/1.0/projects, pulling
+#   up to 100 records per page via Bearer token auth. opt_fields restricts the
+#   payload to only the fields the script needs (parent.name, assignee.name,
+#   start_on, due_on, name, completed_on). On each iteration the response is
+#   validated (raise_for_status), its "data" array is appended to the master
+#   tasks list, and the loop continues only if a "next_page" offset is present.
+# - Once all pages are collected, each task is flattened into a row dict.
+#   The nested assignee object is resolved safely with a fallback empty dict
+#   to handle unassigned tasks without error. Fields are mapped to task_id,
+#   task_name, completed, due_date, assignee, and name, then passed to
+#   pd.DataFrame() to produce a clean, column-oriented structure for
+#   downstream filtering and reporting.
 # ──────────────────────────────────────────────────────────────────────────────
-def fetch_asana_tasks():
-    """Page through the Asana project and return a flat list of task dicts."""
-    headers = {"Authorization": f"Bearer {ASANA_TOKEN}"}
-    url     = f"https://app.asana.com/api/1.0/projects/{PROJECT_GID}/tasks"
-    params  = {
-        "opt_fields": "name,due_on,completed,completed_at,created_at,assignee.name,parent.name",
-        "limit": 100,
-    }
-
-    all_tasks = []
-    offset    = None
-
-    while True:
-        if offset:
-            params["offset"] = offset
-
-        response = requests.get(url, headers=headers, params=params, timeout=30)
-
-        if response.status_code != 200:
-            print(f"[ERROR] Asana API returned HTTP {response.status_code}")
-            print(response.json())
-            sys.exit(1)
-
-        data = response.json()
-        all_tasks.extend(data["data"])
-
-        next_page = data.get("next_page")
-        if next_page:
-            offset = next_page.get("offset")
-        else:
-            break
-
-    print(f"Fetched {len(all_tasks)} tasks from Asana.")
-    return all_tasks
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 2. Shape raw API response into a DataFrame          ◀ AI-ASSISTED
-#    Normalises nested JSON fields (assignee, parent) into flat columns.
-# ──────────────────────────────────────────────────────────────────────────────
-def tasks_to_dataframe(tasks):
-    """Map Asana API fields to a flat DataFrame."""
-    rows = []
-    for t in tasks:
-        assignee = t.get("assignee")
-        parent   = t.get("parent")
-        rows.append({
-            "Name":         t.get("name", ""),
-            "Assignee":     assignee.get("name", "") if assignee else "",
-            "Created At":   t.get("created_at", ""),
-            "Completed At": t.get("completed_at", ""),
-            "Due Date":     t.get("due_on", ""),
-            "Parent task":  parent.get("name", "") if parent else "",
-        })
-    return pd.DataFrame(rows)
+ASANA_TOKEN  = ""
+GROUP_ID = ""
+REPORT_RECIPIENT = ""
+
+url = f"https://app.asana.com/api/1.0/projects"
+
+headers = {"Authorization": f"Bearer {ASANA_TOKEN}"}
+params = {"limit": 100, 
+          "opt_fields":
+          "parent.name,assignee.name,start_on,due_on, name, completed_on"          
+          }
+tasks = []
+
+while True:
+    response = requests.get(url, params=params, headers=headers)
+    response.raise_for_status()
+    result = response.json()
+    tasks.extend(result["data"])
+    next_page = result.get("next_page")
+    if not next_page: 
+        break
+    params["offset"] = next_page["offset"]
+    
+rows = []
+for task in tasks:
+    assignee = task.get("assignee") or {}
+    rows.append({"task_id": task.get("gid"),
+                 "task_name": task.get("name"),
+                 "completed": task.get("completed"),
+                 "due_date": task.get("due_on"),
+                 "assignee": assignee.get("name"),
+                 "name":task.get("name")
+                })
+df= pd.DataFrame(rows)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
