@@ -32,7 +32,7 @@ ASANA_TOKEN  = ""
 GROUP_ID = ""
 REPORT_RECIPIENT = ""
 
-url = f"https://app.asana.com/api/1.0/projects"
+url = f"https://app.asana.com/api/1.0/projects/{GROUP_ID}/tasks"
 
 headers = {"Authorization": f"Bearer {ASANA_TOKEN}"}
 params = {"limit": 100, 
